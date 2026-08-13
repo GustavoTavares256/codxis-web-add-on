@@ -43,6 +43,7 @@ window.XMLHttpRequest = function () {
 };
 
 window.indicadorSelecionadoId = null;
+let pontuacaoEmProcessamento = false;
 
 function createSearchableSelect({
   options,
@@ -227,6 +228,11 @@ async function aplicarPontosIndicador(tipoVenda) {
     return;
   }
 
+  if (pontuacaoEmProcessamento) {
+    console.log("[DEBUG] Pontuação já está sendo processada, ignorando clique duplicado");
+    return;
+  }
+
   const spanValor = document.querySelector("#formNFCe\\:totalVenda");
   if (!spanValor) {
     console.log("[DEBUG] Span de valor não encontrado");
@@ -242,6 +248,7 @@ async function aplicarPontosIndicador(tipoVenda) {
   }
 
   const referenciaVenda = `${tipoVenda}-${Date.now()}`;
+  pontuacaoEmProcessamento = true;
 
   try {
     await window.adicionarPontos(
@@ -253,6 +260,7 @@ async function aplicarPontosIndicador(tipoVenda) {
       `Pontos aplicados! Indicador: ${window.indicadorSelecionadoId}, Valor: ${valorVenda}, Tipo: ${tipoVenda}`,
     );
   } catch (err) {
+    pontuacaoEmProcessamento = false;
     console.error("Erro ao aplicar pontos:", err);
   }
 }

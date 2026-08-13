@@ -1,11 +1,13 @@
 async function apiFetch(endpoint, options = {}) {
+  const { headers: customHeaders = {}, ...fetchOptions } = options;
   const response = await fetch(`${CONFIG.API_BASE}${endpoint}`, {
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": CONFIG.API_KEY,
-      ...options.headers,
+      ...customHeaders,
     },
-    ...options,
+    ...fetchOptions,
   });
 
   if (!response.ok) {
@@ -60,6 +62,9 @@ async function atualizarIndicador(id, dados) {
 async function adicionarPontos(id, valorLiquidoVenda, referenciaVenda) {
   return apiFetch(`/${id}/pontuacao`, {
     method: "POST",
+    // Permite que o navegador conclua a requisição mesmo quando o Codxis
+    // recarrega ou troca de página logo após a finalização da venda.
+    keepalive: true,
     body: JSON.stringify({
       valor_liquido_venda: valorLiquidoVenda,
       referencia_venda: referenciaVenda,
