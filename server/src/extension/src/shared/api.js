@@ -37,14 +37,14 @@ async function listarIndicadores(filtros = {}) {
   if (filtros.apelido) params.append("apelido", filtros.apelido);
   if (filtros.pontos_min) params.append("pontos_min", filtros.pontos_min);
   if (filtros.pontos_max) params.append("pontos_max", filtros.pontos_max);
-  if (filtros.ativo !== undefined) params.append("ativo", true);
+  if (filtros.ativo !== undefined && filtros.ativo !== null)
+    params.append("ativo", String(Boolean(filtros.ativo)));
   if (filtros.order_by) params.append("order_by", filtros.order_by);
   if (filtros.order_dir) params.append("order_dir", filtros.order_dir);
   if (filtros.page) params.append("page", filtros.page);
   if (filtros.limit) params.append("limit", filtros.limit);
 
   const query = params.toString();
-  console.log("[DEBUG] api.js - listarIndicadores:", query);
   return apiFetch(`/${query ? `?${query}` : ""}`);
 }
 
@@ -73,7 +73,6 @@ async function adicionarPontos(id, valorLiquidoVenda, referenciaVenda) {
 }
 
 async function excluirIndicador(id) {
-  console.log("API: Excluindo indicador ID:", id);
   return apiFetch(`/${id}`, {
     method: "DELETE",
   });

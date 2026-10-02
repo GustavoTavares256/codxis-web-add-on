@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "version": "1.0.1",
+  "version": "1.0.9",
   "name": "Indicador de Pintores",
   "description": "Adiciona a funcionalidade de registrar o usuário que indicou uma venda no Codxis Web.",
   "update_url": "https://extension-one-psi.vercel.app/updates.xml",
