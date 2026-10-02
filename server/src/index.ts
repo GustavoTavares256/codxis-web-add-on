@@ -1,18 +1,8 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import {
-  readFileSync,
-  existsSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "fs";
-import { join, dirname, relative } from "path";
+import { existsSync, readFileSync, readdirSync } from "fs";
+import { join, dirname, relative, sep } from "path";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
-import { createWriteStream } from "fs";
-// import archiver from "archiver";
-import { Readable } from "stream";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -24,20 +14,48 @@ await fastify.register(cors, {
   methods: ["GET", "POST"],
 });
 
-const CRX_FILE = "extension.crx";
-const EXTENSION_DIR = join(__dirname, "extension");
-const PUBLIC_DIR = join(__dirname, "..", "public");
+// ─── Resolução de caminhos ─────────────────────────────────────────────────
+// A extensão vive em server/src/extension, mas o processo pode ser iniciado
+// de src (tsx / dev) ou de dist (node dist/index.js). Testamos os dois casos
+// para não servir um pacote vazio silenciosamente.
+const EXTENSION_DIR_CANDIDATOS = [
+  join(__dirname, "extension"),
+  join(__dirname, "..", "src", "extension"),
+];
 
-// Lê a versão atual do manifest
+function resolveExtensionDir(): string | null {
+  return (
+    EXTENSION_DIR_CANDIDATOS.find((dir) => existsSync(join(dir, "manifest.json"))) ||
+    null
+  );
+}
+
+const EXTENSION_DIR = resolveExtensionDir();
+
+if (!EXTENSION_DIR) {
+  fastify.log.error(
+    "Diretorio da extensao nao encontrado. /download-zip retornara 500. " +
+      `Candidatos: ${EXTENSION_DIR_CANDIDATOS.join(", ")}`,
+  );
+}
+
+// Zip e JavaScript usam "/" como separador. Em Windows, path.relative() devolve
+// "\\", o que fazia o cliente não encontrar nenhum arquivo e quebrar a extensão.
+function normalizeZipPath(caminho: string): string {
+  return caminho.split(sep).join("/");
+}
+
 function getCurrentVersion(): string {
-  // try {
-  //   const manifestPath = join(EXTENSION_DIR, "manifest.json");
-  //   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-  //   return manifest.version || "1.0.0";
-  // } catch {
-  //   return "1.0.0";
-  // }
-  return "1.0.8";
+  if (!EXTENSION_DIR) return "0.0.0";
+
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(EXTENSION_DIR, "manifest.json"), "utf-8"),
+    );
+    return manifest.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
 }
 
 // API Key simples — em produção use variável de ambiente
@@ -56,11 +74,10 @@ function validateApiKey(request: any, reply: any): boolean {
 fastify.get("/version", async (request, reply) => {
   if (!validateApiKey(request, reply)) return;
 
-  const version = getCurrentVersion();
   const baseUrl = process.env.BASE_URL || "http://localhost:3333";
 
   return {
-    version,
+    version: getCurrentVersion(),
     download_url: `${baseUrl}/download-zip`,
     updated_at: new Date().toISOString(),
   };
@@ -70,6 +87,13 @@ fastify.get("/version", async (request, reply) => {
 // Gera um ZIP em memória com todos os arquivos JS/CSS que podem ser atualizados
 fastify.get("/download-zip", async (request, reply) => {
   if (!validateApiKey(request, reply)) return;
+
+  if (!EXTENSION_DIR) {
+    return reply.code(500).send({
+      error: "Extensao nao encontrada no servidor",
+      candidates: EXTENSION_DIR_CANDIDATOS,
+    });
+  }
 
   // Pastas e arquivos a incluir no ZIP
   const includePaths = ["src/shared", "src/contents", "src/css"];
@@ -87,13 +111,25 @@ fastify.get("/download-zip", async (request, reply) => {
         (entry.name.endsWith(".js") || entry.name.endsWith(".css"))
       ) {
         const fullPath = join(fullDir, entry.name);
-        const relPath = relative(EXTENSION_DIR, fullPath);
+        const relPath = normalizeZipPath(relative(EXTENSION_DIR, fullPath));
         files[relPath] = readFileSync(fullPath, "utf-8");
       }
     }
   }
 
-  // Importa JSZip dinamicamente (instalar: npm install jszip)
+  const manifest = JSON.parse(
+    readFileSync(join(EXTENSION_DIR, "manifest.json"), "utf-8"),
+  );
+
+  // Um pacote vazio sobrescreveria a extensão do cliente com um update
+  // "bem-sucedido" que nao aplica nenhum arquivo. Melhor falhar alto.
+  if (!Object.keys(files).length) {
+    return reply.code(500).send({
+      error: "Nenhum arquivo de atualizacao encontrado",
+      extensionDir: EXTENSION_DIR,
+    });
+  }
+
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
 
@@ -102,15 +138,13 @@ fastify.get("/download-zip", async (request, reply) => {
   }
 
   // Adiciona manifest.json para o cliente saber a versão
-  const manifestPath = join(EXTENSION_DIR, "manifest.json");
-  if (existsSync(manifestPath)) {
-    zip.file("manifest.json", readFileSync(manifestPath, "utf-8"));
-  }
+  zip.file("manifest.json", JSON.stringify(manifest, null, 2));
 
   const zipBuffer = await zip.generateAsync({
     type: "nodebuffer",
     compression: "DEFLATE",
     compressionOptions: { level: 6 },
+    platform: "UNIX",
   });
 
   reply.header("Content-Type", "application/zip");
@@ -127,11 +161,10 @@ fastify.get("/", async () => {
   return {
     name: "Indicador de Pintores — Update Server",
     version: getCurrentVersion(),
+    extensionDirFound: Boolean(EXTENSION_DIR),
     endpoints: {
       version: "GET /version (requer x-api-key)",
       downloadZip: "GET /download-zip (requer x-api-key)",
-      updateXml: "GET /updates.xml",
-      crx: `GET /${CRX_FILE}`,
     },
   };
 });

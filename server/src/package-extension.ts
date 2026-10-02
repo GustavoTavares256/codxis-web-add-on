@@ -1,127 +1,208 @@
-import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { existsSync, readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const EXTENSION_DIR = join(__dirname, '..', '..');
-const SERVER_PUBLIC_DIR = join(__dirname, '..', 'public');
+const SERVER_PUBLIC_DIR = join(__dirname, "..", "public");
+const PEM_PATH = join(SERVER_PUBLIC_DIR, "extension.pem");
+const PUB_PATH = join(SERVER_PUBLIC_DIR, "extension.pub");
+const CRX_PATH = join(SERVER_PUBLIC_DIR, "extension.crx");
+
+// Mesma resolucao usada em index.ts: src (tsx) ou dist (node dist/...).
+const EXTENSION_DIR_CANDIDATOS = [
+  join(__dirname, "extension"),
+  join(__dirname, "..", "src", "extension"),
+];
+
+function resolveExtensionDir(): string | null {
+  return (
+    EXTENSION_DIR_CANDIDATOS.find((dir) => existsSync(join(dir, "manifest.json"))) ||
+    null
+  );
+}
+
+const EXTENSION_DIR = resolveExtensionDir();
 
 function getCurrentVersion(): string {
+  if (!EXTENSION_DIR) return "0.0.0";
+
   try {
-    const manifestPath = join(EXTENSION_DIR, 'manifest.json');
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    return manifest.version || '1.0.0';
+    const manifest = JSON.parse(
+      readFileSync(join(EXTENSION_DIR, "manifest.json"), "utf-8"),
+    );
+    return manifest.version || "0.0.0";
   } catch {
-    return '1.0.0';
+    return "0.0.0";
   }
+}
+
+function chromePaths(): string[] {
+  const env = process.env.CHROME_PATH;
+  if (env) return [env];
+
+  if (process.platform === "win32") {
+    return [
+      "chrome",
+      join(
+        process.env["PROGRAMFILES"] || "C:\\Program Files",
+        "Google\\Chrome\\Application\\chrome.exe",
+      ),
+      join(
+        process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)",
+        "Google\\Chrome\\Application\\chrome.exe",
+      ),
+      join(
+        process.env.LOCALAPPDATA || "",
+        "Google\\Chrome\\Application\\chrome.exe",
+      ),
+    ];
+  }
+
+  return [
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+  ];
 }
 
 function generateKeyPair(): void {
-  const pemPath = join(SERVER_PUBLIC_DIR, 'extension.pem');
-  const pubPath = join(SERVER_PUBLIC_DIR, 'extension.pub');
-  
-  if (existsSync(pemPath)) {
-    console.log('Chave privada já existe em:', pemPath);
+  if (existsSync(PEM_PATH)) {
+    console.log("Chave privada já existe em:", PEM_PATH);
     return;
   }
-  
-  console.log('Gerando par de chaves...');
-  
-  execSync(`openssl genrsa -out "${pemPath}" 2048 2>/dev/null`, { stdio: 'inherit' });
-  execSync(`openssl rsa -in "${pemPath}" -pubout -out "${pubPath}" 2>/dev/null`, { stdio: 'inherit' });
-  
-  console.log('Chaves geradas com sucesso!');
-  console.log('  Privada:', pemPath);
-  console.log('  Pública:', pubPath);
+
+  console.log("Gerando par de chaves...");
+
+  try {
+    execFileSync("openssl", ["genrsa", "-out", PEM_PATH, "2048"]);
+    execFileSync("openssl", ["rsa", "-in", PEM_PATH, "-pubout", "-out", PUB_PATH]);
+    console.log("Chaves geradas com sucesso!");
+    console.log("  Privada:", PEM_PATH);
+    console.log("  Pública:", PUB_PATH);
+  } catch (error) {
+    console.error("Falha ao gerar as chaves. Verifique se o openssl está instalado.");
+    process.exitCode = 1;
+  }
 }
 
-function getExtensionId(): string {
-  const pemPath = join(SERVER_PUBLIC_DIR, 'extension.pem');
-  
-  if (!existsSync(pemPath)) {
-    console.log('⚠️  Gere as chaves primeiro: npm run generate-keys');
-    return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-  }
-  
+// O Chrome deriva o Extension ID do MD5 da chave pública (DER/SPKI),
+// convertendo cada nibble em uma letra de 'a' até 'p'.
+function getExtensionId(): string | null {
   try {
-    const result = execSync(`openssl rsa -in "${pemPath}" -RSAPublicKey_out -outform DER 2>/dev/null | openssl md5 -c`, { encoding: 'utf-8' });
-    const hash = result.replace(/MD5\(stdin\)= /g, '').trim().replace(/:/g, '');
-    const alphabet = 'abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789';
-    let id = '';
-    for (let i = 0; i < 32; i++) {
-      const byteIndex = Math.floor(i / 2);
-      const hexChar = hash.slice(byteIndex * 2, byteIndex * 2 + 2);
-      const val = parseInt(hexChar, 16);
-      id += alphabet[val % alphabet.length];
+    const der = execFileSync(
+      "openssl",
+      ["rsa", "-in", PEM_PATH, "-pubout", "-outform", "DER"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+
+    const hash = createHash("md5").update(der).digest();
+
+    let id = "";
+    for (const byte of hash) {
+      id += String.fromCharCode(97 + (byte >> 4));
+      id += String.fromCharCode(97 + (byte & 0x0f));
     }
     return id;
   } catch {
-    return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    return null;
   }
 }
 
 function packageExtension(): void {
-  const pemPath = join(SERVER_PUBLIC_DIR, 'extension.pem');
-  const crxPath = join(SERVER_PUBLIC_DIR, 'indicador-pintores.crx');
-  const version = getCurrentVersion();
-  
-  if (!existsSync(pemPath)) {
-    console.log('⚠️  Gere as chaves primeiro: npm run generate-keys');
+  if (!EXTENSION_DIR) {
+    console.error(
+      "✗ manifest.json da extensão não encontrado. Candidatos:",
+      EXTENSION_DIR_CANDIDATOS.join(", "),
+    );
+    process.exitCode = 1;
     return;
   }
-  
-  console.log(`Empacotando extensão versão ${version}...`);
-  
-  try {
-    execSync(`chrome --pack-extension="${EXTENSION_DIR}" --pack-extension-key="${pemPath}" --pack-output="${crxPath.replace('.crx', '')}"`, { stdio: 'inherit' });
-    
-    if (existsSync(crxPath)) {
-      console.log('✅ Extensão empacotada com sucesso!');
-      console.log('   Arquivo:', crxPath);
-      console.log('   Extension ID:', getExtensionId());
-    }
-  } catch (error) {
-    console.log('⚠️  Chrome não encontrado no PATH');
-    console.log('');
-    console.log('Instale o Chrome ou use uma destas alternativas:');
-    console.log('  1. No Linux: sudo apt install google-chrome-stable');
-    console.log('  2. Ou empacote manualmente via chrome://extensions');
-    console.log('');
-    console.log('Após empacotar manualmente:');
-    console.log(`  Copie o arquivo .crx para: ${crxPath}`);
-    console.log(`  Copie o arquivo .pem para: ${pemPath}`);
+
+  if (!existsSync(PEM_PATH)) {
+    console.log("⚠️  Gere as chaves primeiro: npm run generate-keys");
+    return;
   }
+
+  const version = getCurrentVersion();
+  console.log(`Empacotando extensão versão ${version}...`);
+  console.log("  Origem:", EXTENSION_DIR);
+
+  // O Chrome acrescenta o .crx ao --pack-output.
+  const packOutput = CRX_PATH.replace(/\.crx$/, "");
+  const args = [
+    `--pack-extension=${EXTENSION_DIR}`,
+    `--pack-extension-key=${PEM_PATH}`,
+    `--pack-output=${packOutput}`,
+  ];
+
+  for (const executable of chromePaths()) {
+    try {
+      execFileSync(executable, args, { stdio: "inherit" });
+    } catch {
+      continue;
+    }
+
+    if (existsSync(CRX_PATH)) {
+      console.log("✅ Extensão empacotada com sucesso!");
+      console.log("   Arquivo:", CRX_PATH);
+      console.log(
+        "   Extension ID:",
+        getExtensionId() ??
+          "indisponível (openssl não encontrado no PATH)",
+      );
+      return;
+    }
+  }
+
+  console.log("⚠️  Chrome não encontrado ou empacotamento falhou.");
+  console.log("");
+  console.log("Instale o Chrome ou defina CHROME_PATH com o caminho do executável.");
+  console.log("Alternativa: empacote manualmente via chrome://extensions e");
+  console.log(`copie o .crx gerado para: ${CRX_PATH}`);
+  process.exitCode = 1;
 }
 
 function showStatus(): void {
-  const pemPath = join(SERVER_PUBLIC_DIR, 'extension.pem');
-  const crxPath = join(SERVER_PUBLIC_DIR, 'indicador-pintores.crx');
-  
-  console.log('═══════════════════════════════════════════════════════');
-  console.log('          Status do Servidor de Updates                ');
-  console.log('═══════════════════════════════════════════════════════');
-  console.log(`Versão atual: ${getCurrentVersion()}`);
-  console.log(`Chave privada: ${existsSync(pemPath) ? '✅ OK' : '❌ Não encontrada'}`);
-  console.log(`Arquivo CRX:  ${existsSync(crxPath) ? '✅ OK' : '❌ Não encontrado'}`);
-  console.log(`Extension ID: ${getExtensionId()}`);
-  console.log('═══════════════════════════════════════════════════════');
+  console.log(
+    "═══════════════════════════════════════════════════════",
+  );
+  console.log(
+    "          Status do Servidor de Updates                ",
+  );
+  console.log(
+    "═══════════════════════════════════════════════════════",
+  );
+  console.log(`Versão atual:   ${getCurrentVersion()}`);
+  console.log(`Diretório:      ${EXTENSION_DIR || "não encontrado"}`);
+  console.log(
+    `Chave privada: ${existsSync(PEM_PATH) ? "✅ OK" : "❌ Não encontrada"}`,
+  );
+  console.log(
+    `Arquivo CRX:    ${existsSync(CRX_PATH) ? "✅ OK" : "❌ Não encontrado"}`,
+  );
+  console.log(`Extension ID:   ${getExtensionId() ?? "indisponível (openssl não encontrado no PATH)"}`);
+  console.log(
+    "═══════════════════════════════════════════════════════",
+  );
 }
 
 const args = process.argv.slice(2);
-const command = args[0] || 'status';
+const command = args[0] || "status";
 
 switch (command) {
-  case 'generate-keys':
-  case 'keys':
+  case "generate-keys":
+  case "keys":
     generateKeyPair();
     break;
-  case 'package':
+  case "package":
     packageExtension();
     break;
-  case 'status':
+  case "status":
   default:
     showStatus();
     break;
