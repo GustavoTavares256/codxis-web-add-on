@@ -1,6 +1,6 @@
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, renameSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -140,11 +140,28 @@ function packageExtension(): void {
     `--pack-output=${packOutput}`,
   ];
 
+  // Sem isto, um .crx antigo em disco faz o existsSync() abaixo dar certo e
+  // o script anuncia sucesso mesmo quando o Chrome nao escreveu nada.
+  const crxResgatado = `${EXTENSION_DIR}.crx`;
+  for (const antigo of [CRX_PATH, crxResgatado]) {
+    if (existsSync(antigo)) {
+      unlinkSync(antigo);
+      console.log("  Removendo CRX anterior:", antigo);
+    }
+  }
+
   for (const executable of chromePaths()) {
     try {
       execFileSync(executable, args, { stdio: "inherit" });
     } catch {
       continue;
+    }
+
+    // Chrome 154 ignora --pack-output e grava em "<pasta-da-extensao>.crx".
+    // Sem este resgate, o empacotamento "funciona" e o arquivo some.
+    if (!existsSync(CRX_PATH) && existsSync(crxResgatado)) {
+      renameSync(crxResgatado, CRX_PATH);
+      console.log("  Resgatado de:", crxResgatado);
     }
 
     if (existsSync(CRX_PATH)) {
