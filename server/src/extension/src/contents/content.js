@@ -51,6 +51,26 @@ function parseValorMonetario(texto) {
   return Number.isFinite(valor) ? valor : null;
 }
 
+// Procura o numero do pedido entre os campos conhecidos do PDV. Nenhum
+// candidato e obrigatorio: quando o Codxis nao mostra nenhum deles, a venda
+// fica sem numero e ele pode ser preenchido depois no modal de Historico.
+function capturarNumeroPedido() {
+  for (const seletor of CONFIG.SELETORES_NUMERO_PEDIDO) {
+    const elemento = document.querySelector(seletor);
+    if (!elemento) continue;
+
+    const texto = (elemento.value || elemento.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (texto.length > 1 && texto.length <= 40 && /\d/.test(texto)) {
+      return texto;
+    }
+  }
+
+  return null;
+}
+
 function mostrarAviso(mensagem) {
   let aviso = document.getElementById("codxis-aviso-indicador");
 
@@ -398,7 +418,9 @@ function bloquearFinalizacaoSemIndicador(event) {
 }
 
 async function aplicarPontosIndicador(tipoVenda) {
-  if (!window.indicadorSelecionadoId) {
+  const indicadorId = window.indicadorSelecionadoId;
+
+  if (!indicadorId) {
     console.warn("[Indicador] Finalização sem indicador selecionado.");
     return;
   }
@@ -421,7 +443,8 @@ async function aplicarPontosIndicador(tipoVenda) {
     return;
   }
 
-  const referenciaVenda = `${tipoVenda}-${Date.now()}`;
+  const numeroPedido = capturarNumeroPedido();
+  const referenciaVenda = montarReferenciaVenda(tipoVenda, numeroPedido);
 
   pontuacaoEmProcessamento = true;
   clearTimeout(temporizadorLiberacaoPontuacao);
@@ -430,13 +453,22 @@ async function aplicarPontosIndicador(tipoVenda) {
   }, DEBOUNCE_LIBERACAO_PONTUACAO_MS);
 
   try {
-    await window.adicionarPontos(
-      window.indicadorSelecionadoId,
-      valorVenda,
-      referenciaVenda,
-    );
+    await window.adicionarPontos(indicadorId, valorVenda, referenciaVenda);
+
+    registrarVendaHistorico({
+      indicadorId,
+      referencia: referenciaVenda,
+      pedido: numeroPedido,
+      tipo: tipoVenda,
+      valor: valorVenda,
+      pontos: Math.floor(valorVenda / CONFIG.PONTOS_VALOR_REAIS),
+      data: new Date().toISOString(),
+      origem: "local",
+      editavel: true,
+    });
+
     console.log(
-      `[Indicador] Pontos creditados. Indicador: ${window.indicadorSelecionadoId}, Valor: ${valorVenda}, Tipo: ${tipoVenda}`,
+      `[Indicador] Pontos creditados. Indicador: ${indicadorId}, Valor: ${valorVenda}, Tipo: ${tipoVenda}, Pedido: ${numeroPedido || "não identificado"}`,
     );
   } catch (err) {
     console.error("[Indicador] Erro ao aplicar pontos:", err);
@@ -463,3 +495,9 @@ function initVendaListeners() {
 
 initVendaListeners();
 observarCriacaoDoCampo();
+
+// Permite confirmar no console qual build esta rodando no PDV antes de
+// testar qualquer comportamento novo.
+console.info(
+  `[Indicador] PDV Codxis v${CONFIG.VERSAO_EXTENSAO} — Indicador obrigatorio ativo.`,
+);

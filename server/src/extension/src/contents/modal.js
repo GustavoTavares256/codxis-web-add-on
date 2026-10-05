@@ -445,6 +445,103 @@ function renderResgatarPontosForm(indicador) {
   `;
 }
 
+function renderHistoricoForm(dados) {
+  const { indicador, itens, parcial } = dados;
+
+  const totalPontos = itens.reduce(
+    (soma, venda) => soma + (Number(venda.pontos) || 0),
+    0,
+  );
+
+  const avisoFonte = parcial
+    ? `<div class="historico-fonte">
+         <strong>Histórico parcial:</strong> a API ainda não disponibiliza a
+         leitura das vendas, então aqui aparecem apenas as registradas neste
+         computador. Para ver as vendas de outras máquinas é necessário
+         criar a rota de leitura no backend.
+       </div>`
+    : "";
+
+  const linhas = itens.length
+    ? itens
+        .map(
+          (venda) => `
+      <tr>
+        <td>${formatarDataHora(venda.data)}</td>
+        <td>${venda.tipo || "-"}</td>
+        <td>
+          ${
+            venda.editavel
+              ? `<input
+                   type="text"
+                   class="historico-pedido"
+                   data-indicador="${indicador.id}"
+                   data-referencia="${venda.referencia || ""}"
+                   value="${venda.pedido || ""}"
+                   placeholder="informar"
+                   maxlength="40"
+                 />`
+              : venda.pedido || "-"
+          }
+        </td>
+        <td>${venda.valor != null ? formatCurrency(venda.valor) : "-"}</td>
+        <td>${venda.pontos != null ? venda.pontos.toLocaleString("pt-BR") : "-"}</td>
+      </tr>`,
+        )
+        .join("")
+    : `<tr class="empty-row">
+         <td colspan="5">Nenhuma venda registrada para este indicador.</td>
+       </tr>`;
+
+  return `
+    <div id="historico">
+      <div class="col-12 subtitle-divider-margin">
+        <h1 class="subtitle">Histórico de Vendas - ${indicador.nome}</h1>
+        <div class="subtitle-divider"></div>
+      </div>
+
+      ${avisoFonte}
+
+      <div class="historico-resumo">
+        <p><strong>Vendas:</strong> ${itens.length}</p>
+        <p><strong>Pontos creditados:</strong> ${totalPontos.toLocaleString("pt-BR")}</p>
+        <p><strong>Saldo atual:</strong> ${(indicador.pontos || 0).toLocaleString("pt-BR")}</p>
+      </div>
+
+      <div class="historico-container">
+        <table class="historico-tabela">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Tipo</th>
+              <th>Pedido</th>
+              <th>Valor</th>
+              <th>Pontos</th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>
+      </div>
+
+      <div class="form-footer">
+        <button
+          id="btnExportarHistorico"
+          class="ui-button ui-widget ui-state-default ui-corner-all"
+          style="margin-right: 10px;"
+        >
+          Exportar CSV
+        </button>
+        <button
+          id="btnFecharHistorico"
+          class="ui-button ui-widget ui-state-default ui-corner-all"
+        >
+          Fechar
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 function openCustomModal(type, data = null) {
   try {
     const overlay = document.getElementById("custom-modal-overlay");
@@ -562,6 +659,29 @@ function openCustomModal(type, data = null) {
         );
       if (btnConfirmar)
         btnConfirmar.addEventListener("click", window.handleResgatarPontos);
+    }
+
+    if (type === "Historico" && data) {
+      content.innerHTML = renderHistoricoForm(data);
+
+      const btnFechar = document.getElementById("btnFecharHistorico");
+      if (btnFechar)
+        btnFechar.addEventListener("click", () =>
+          openCustomModal("Consultar"),
+        );
+
+      const btnExportar = document.getElementById("btnExportarHistorico");
+      if (btnExportar)
+        btnExportar.addEventListener("click", () =>
+          window.exportarHistoricoCSV(data.indicador, data.itens),
+        );
+
+      // Salva o numero do pedido assim que o campo perde o foco.
+      content.addEventListener("change", (e) => {
+        if (e.target.classList?.contains("historico-pedido")) {
+          window.salvarPedidoHistorico(e.target);
+        }
+      });
     }
 
     overlay.classList.add("active");

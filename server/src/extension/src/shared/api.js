@@ -11,8 +11,9 @@ async function apiFetch(endpoint, options = {}) {
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error);
+    const error = new Error(await response.text());
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) {
@@ -95,3 +96,51 @@ window.atualizarIndicador = atualizarIndicador;
 window.adicionarPontos = adicionarPontos;
 window.excluirIndicador = excluirIndicador;
 window.rescatarPontos = rescatarPontos;
+
+// Rotas ja testadas e inexistentes: um 404 nao muda dentro da sessao, entao
+// deixar de repetir a chamada evita 404 a cada abertura do Historico.
+const rotasHistoricoSemLeitura = new Set();
+
+function normalizarHistoricoRemoto(resposta, indicadorId) {
+  const lista = Array.isArray(resposta)
+    ? resposta
+    : resposta?.data || resposta?.pontuacoes || resposta?.historico;
+
+  if (!Array.isArray(lista)) return null;
+
+  return lista.map((item) => ({
+    indicadorId,
+    referencia: item.referencia_venda || null,
+    pedido:
+      item.numero_pedido || extrairPedidoDaReferencia(item.referencia_venda),
+    tipo: item.tipo || null,
+    valor: Number.isFinite(Number(item.valor_liquido_venda))
+      ? Number(item.valor_liquido_venda)
+      : null,
+    pontos: Number.isFinite(Number(item.pontos)) ? Number(item.pontos) : null,
+    data: item.created_at || item.data || null,
+    origem: "api",
+    editavel: false,
+  }));
+}
+
+// Tenta as rotas de leitura do extrato. Hoje nenhuma existe e o retorno e
+// null; assim que o backend criar uma delas, o Historico passa a trazer as
+// vendas de todas as maquinas sem nenhuma alteracao aqui.
+async function buscarHistoricoIndicador(id) {
+  for (const rota of CONFIG.ROTAS_HISTORICO_API) {
+    if (rotasHistoricoSemLeitura.has(rota)) continue;
+
+    try {
+      const resposta = await apiFetch(rota.replace("{id}", id));
+      const itens = normalizarHistoricoRemoto(resposta, id);
+      if (itens) return itens;
+    } catch (erro) {
+      if (erro.status === 404) rotasHistoricoSemLeitura.add(rota);
+    }
+  }
+
+  return null;
+}
+
+window.buscarHistoricoIndicador = buscarHistoricoIndicador;

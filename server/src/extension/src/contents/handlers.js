@@ -156,6 +156,7 @@ function renderTabelaIndicadores(data) {
               ${
                 !shouldHidePontos
                   ? `
+                  <button class="acao-item" data-action="historico">Histórico</button>
                   <button class="acao-item" data-action="adicionar-pontos">Adicionar Pontos</button>
                   <button class="acao-item" data-action="resgatar-pontos">Resgatar Pontos</button>
                 `
@@ -199,6 +200,8 @@ function setupTabelaEventListeners() {
       closeAllAcoesDropdowns();
       if (action === "editar") {
         window.editarIndicador(id);
+      } else if (action === "historico") {
+        window.historicoIndicador(id);
       } else if (action === "adicionar-pontos") {
         window.adicionarPontosIndicador(id);
       } else if (action === "resgatar-pontos") {
@@ -557,6 +560,139 @@ async function handleExcluir() {
   }
 }
 
+function formatarDataHora(iso) {
+  if (!iso) return "-";
+
+  const data = new Date(iso);
+  if (Number.isNaN(data.getTime())) return String(iso);
+
+  return data.toLocaleString("pt-BR");
+}
+
+// A chave de fusao usa a referencia quando existe; vendas antigas, sem
+// referencia, caem em uma chave derivada de data e valor.
+function chaveHistorico(venda) {
+  return venda.referencia || `${venda.data || ""}|${venda.valor || ""}`;
+}
+
+function mesclarHistorico(remoto, local, indicadorId) {
+  const porChave = new Map();
+
+  for (const venda of local || []) {
+    porChave.set(chaveHistorico(venda), {
+      ...venda,
+      indicadorId,
+      origem: "local",
+      editavel: true,
+    });
+  }
+
+  for (const venda of remoto || []) {
+    const existente = porChave.get(chaveHistorico(venda));
+
+    porChave.set(
+      chaveHistorico(venda),
+      existente
+        ? { ...existente, ...venda, pedido: existente.pedido || venda.pedido }
+        : { ...venda, indicadorId, origem: venda.origem || "api", editavel: false },
+    );
+  }
+
+  return [...porChave.values()].sort((a, b) =>
+    String(b.data || "").localeCompare(String(a.data || "")),
+  );
+}
+
+async function historicoIndicador(id) {
+  closeAllAcoesDropdowns();
+
+  let indicador = indicadorCache[id];
+
+  if (!indicador) {
+    try {
+      indicador = await window.buscarIndicador(id);
+      indicadorCache[id] = indicador;
+    } catch (err) {
+      console.error("Erro ao buscar indicador:", err);
+      alert("Não foi possível carregar o indicador.");
+      return;
+    }
+  }
+
+  let remoto = null;
+  try {
+    remoto = await window.buscarHistoricoIndicador(id);
+  } catch (err) {
+    console.warn("Falha ao consultar o histórico na API:", err);
+  }
+
+  const local = listarHistoricoLocal(id);
+
+  window.openCustomModal("Historico", {
+    indicador,
+    itens: mesclarHistorico(remoto, local, id),
+    parcial: !remoto,
+  });
+}
+
+function campoCSV(valor) {
+  const texto = String(valor ?? "");
+
+  return /[";\r\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+}
+
+function exportarHistoricoCSV(indicador, itens) {
+  const cabecalho = ["Data", "Tipo", "Pedido", "Valor", "Pontos", "Referencia"];
+  const linhas = itens.map((venda) => [
+    formatarDataHora(venda.data),
+    venda.tipo || "",
+    venda.pedido || "",
+    venda.valor != null ? String(venda.valor).replace(".", ",") : "",
+    venda.pontos != null ? String(venda.pontos).replace(".", ",") : "",
+    venda.referencia || "",
+  ]);
+
+  const conteudo = [cabecalho, ...linhas]
+    .map((linha) => linha.map(campoCSV).join(";"))
+    .join("\r\n");
+
+  const nome =
+    (indicador.apelido || indicador.nome || "indicador")
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .replace(/[^\w.-]+/g, "-")
+      .toLowerCase() || "indicador";
+
+  // BOM para o Excel abrir os acentos corretamente.
+  const blob = new Blob(["\uFEFF" + conteudo], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `historico-${nome}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function salvarPedidoHistorico(input) {
+  const indicadorId = input.dataset.indicador;
+  const referencia = input.dataset.referencia;
+  const pedido = input.value.trim();
+
+  if (!atualizarPedidoHistorico(indicadorId, referencia, pedido)) {
+    console.warn(
+      "[Historico] Não foi possível salvar o número do pedido:",
+      referencia,
+    );
+    return;
+  }
+
+  input.classList.add("salvo");
+  setTimeout(() => input.classList.remove("salvo"), 1200);
+}
+
 function toggleAcoesDropdown(btn) {
   const dropdown = btn.nextElementSibling;
   const isActive = dropdown.classList.contains("show");
@@ -591,6 +727,10 @@ window.editarIndicador = editarIndicador;
 window.adicionarPontosIndicador = adicionarPontosIndicador;
 window.resgatarPontosIndicador = resgatarPontosIndicador;
 window.excluirIndicadorConfirm = excluirIndicadorConfirm;
+window.historicoIndicador = historicoIndicador;
+window.exportarHistoricoCSV = exportarHistoricoCSV;
+window.salvarPedidoHistorico = salvarPedidoHistorico;
+window.mesclarHistorico = mesclarHistorico;
 window.toggleAcoesDropdown = toggleAcoesDropdown;
 window.getFiltros = getFiltros;
 window.setupTabelaEventListeners = setupTabelaEventListeners;

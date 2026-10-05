@@ -405,3 +405,87 @@
     padding: 8px 4px;
   }
 }
+
+/* ========================
+   Historico de Vendas
+   ======================== */
+
+.historico-fonte {
+  margin-bottom: 15px;
+  padding: 12px 15px;
+  background: #fff8e1;
+  border: 1px solid #ffe0a3;
+  border-left: 4px solid #f5a623;
+  border-radius: 6px;
+  color: #7a5200;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.historico-resumo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 25px;
+  margin-bottom: 15px;
+  padding: 15px;
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+}
+
+.historico-resumo p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.historico-container {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+}
+
+.historico-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.historico-tabela th,
+.historico-tabela td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #eeeeee;
+  white-space: nowrap;
+}
+
+.historico-tabela th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f3f5;
+  color: #282e3f;
+  font-weight: 600;
+}
+
+.historico-tabela tr:last-child td {
+  border-bottom: none;
+}
+
+.historico-pedido {
+  width: 110px;
+  padding: 6px 8px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.historico-pedido:focus {
+  border-color: #4a90d9;
+  outline: none;
+}
+
+.historico-pedido.salvo {
+  border-color: #28a745;
+  background: #eafaf0;
+}
